@@ -28,7 +28,7 @@ fn cached_configuration() -> Result[string, cache::Error] {
 ```
 
 Declare `"ecosystem::cache" = "0.1.0"` in the module root's `[dependencies]`.
-The versioned consumer under `ecosystem/consumers/cache` exercises independently
+The versioned consumer under `../../goml-dev/ecosystem/consumers/cache` exercises independently
 loaded package interfaces, generic specialization, and the JSON oracle protocol.
 
 ## Operations and bounds
