@@ -28,7 +28,7 @@ fn cached_configuration() -> Result[string, cache::Error] {
 ```
 
 Declare `"ecosystem::cache" = "0.1.0"` in the module root's `[dependencies]`.
-The versioned consumer under `../../goml-dev/ecosystem/consumers/cache` exercises independently
+The versioned consumer under `consumer` exercises independently
 loaded package interfaces, generic specialization, and the JSON oracle protocol.
 
 ## Operations and bounds
@@ -185,7 +185,7 @@ TinyLFU, refresh-ahead, stale-while-revalidate, persistence, or distributed prot
 
 ## Validation
 
-Run `just ecosystem-test cache` from the repository root. It creates an
+Run `(cd ../verification && just ecosystem-test cache)` from this library repository. It creates an
 isolated versioned registry, formats/checks the projects, runs 22 black-box library
 tests and independent consumer tests, verifies a stable cached build, and runs:
 
