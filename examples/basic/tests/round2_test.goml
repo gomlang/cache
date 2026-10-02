@@ -1,0 +1,28 @@
+package tests;
+
+use ecosystem::cache;
+use std::testing;
+
+#[test]
+fn idle_refresh_and_overwrite_reschedule_expiry_downstream() -> () {
+    let clock = cache::ManualClock::new();
+    let values: cache::Cache[string, isize] = testing::expect_ok(
+        cache::Cache::new(
+            cache::Options {
+                clock: clock.clock(),
+                expiry: cache::Expiry::idle(4),
+                ..cache::Options::new(2),
+            },
+        ),
+        "cache",
+    );
+    testing::assert_ok(values.insert("key", 1, 1));
+    testing::assert_ok(clock.advance(3));
+    testing::assert(testing::expect_ok(values.get("key"), "refresh") == Option::Some(1));
+    testing::assert_ok(clock.advance(3));
+    testing::assert_eq(testing::expect_ok(values.prune(), "still live"), 0);
+    testing::assert_ok(values.insert_with_expiry("key", 2, 1, cache::Expiry::ttl(2)));
+    testing::assert_ok(clock.advance(2));
+    testing::assert_eq(testing::expect_ok(values.prune(), "expire"), 1);
+    testing::assert_eq(values.stats().entries, 0);
+}

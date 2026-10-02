@@ -1,0 +1,109 @@
+package cache;
+
+use std::testing;
+
+fn assert_expiry_queue(queue: ExpiryQueue[isize], expected: HashMap[isize, i64]) -> () {
+    testing::assert_eq(queue.values.len(), expected.len());
+    testing::assert_eq(queue.positions.len(), expected.len());
+    let mut minimum: Option[i64] = Option::None;
+    for (key, deadline) in expected.entries() {
+        minimum = earlier(minimum, deadline);
+        let index = testing::expect_some(queue.positions.get(key), "position");
+        testing::assert(queue.values[index] == (key, deadline));
+    }
+    testing::assert(queue.first().map(|value| value.1) == minimum);
+    for index in 1..queue.values.len() {
+        testing::assert(queue.values[(index - 1) / 2].1 <= queue.values[index].1);
+    }
+}
+
+#[test]
+fn indexed_expiry_heap_tracks_updates_removals_ties_and_empty_transitions() -> () {
+    let queue = ExpiryQueue::new();
+    let expected = HashMap::new();
+    let mut seed = 17;
+    for step in 0..3000 {
+        seed = (seed * 97 + 13) % 10007;
+        let key = seed % 31;
+        if step % 4 == 0 {
+            queue.remove(key);
+            expected.remove(key);
+        } else {
+            let deadline = (seed % 19).to_i64();
+            queue.set(key, Option::Some(deadline));
+            expected.set(key, deadline);
+        }
+        assert_expiry_queue(queue, expected);
+    }
+    for (key, _) in expected.entries() {
+        queue.set(key, Option::None);
+        expected.remove(key);
+        assert_expiry_queue(queue, expected);
+    }
+    queue.remove(99);
+    assert_expiry_queue(queue, expected);
+}
+
+#[test]
+fn deadline_index_matches_original_expiry_predicate_at_numeric_boundaries() -> () {
+    for created in Vec::from_array([0, 2, 9223372036854775804, 9223372036854775807]) {
+        for used in Vec::from_array([created, 9223372036854775807]) {
+            for ttl in Vec::from_array([0, 1, 3, 9223372036854775807]) {
+                for tti in Vec::from_array([0, 1, 3, 9223372036854775807]) {
+                    for deadline in Vec::from_array(
+                        [
+                            Option::None,
+                            Option::Some(0),
+                            Option::Some(3),
+                            Option::Some(9223372036854775807),
+                        ],
+                    ) {
+                        let expiry = Expiry { ttl_ms: ttl, tti_ms: tti, deadline_ms: deadline };
+                        for now in Vec::from_array([used, 9223372036854775807]) {
+                            testing::assert_eq(
+                                expiry.next_deadline(created, used).map(|value| now >= value).unwrap_or(
+                                    false,
+                                ),
+                                expiry.expired(now, created, used),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn frequent_idle_refresh_replacement_and_deletion_keep_one_index_per_live_entry() -> () {
+    let clock = ManualClock::new();
+    let values: Cache[isize, isize] = testing::expect_ok(
+        Cache::new(Options { clock: clock.clock(), ..Options::new(32) }),
+        "cache",
+    );
+    for key in 0..32 {
+        testing::assert_ok(values.insert_with_expiry(key, key, 1, Expiry::idle(100)));
+    }
+    for round in 0..100 {
+        testing::assert_ok(clock.advance(1));
+        for key in 0..32 {
+            testing::assert_some(testing::expect_ok(values.get(key), "refresh"));
+            if round % 7 == 0 {
+                testing::assert_ok(values.insert_with_expiry(key, key, 1, Expiry::idle(100)));
+            }
+            testing::assert_eq(values.state.get().deadlines.values.len(), 32);
+            testing::assert_eq(values.state.get().deadlines.positions.len(), 32);
+        }
+    }
+    for key in 0..16 {
+        testing::assert_ok(values.insert_with_expiry(key, key, 1, Expiry::none()));
+    }
+    testing::assert_eq(values.state.get().deadlines.values.len(), 16);
+    for key in 16..32 {
+        testing::assert_ok(values.remove(key));
+    }
+    testing::assert_eq(values.state.get().deadlines.values.len(), 0);
+    testing::assert_eq(values.state.get().deadlines.positions.len(), 0);
+    testing::assert_ok(values.clear());
+    values.close();
+}

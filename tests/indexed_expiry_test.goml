@@ -1,0 +1,61 @@
+package tests;
+
+use ecosystem::cache;
+use std::testing;
+
+#[test]
+fn equal_deadlines_expire_once_before_reentrant_notifications_and_admission() -> () {
+    let clock = cache::ManualClock::new();
+    let events = Vec::new();
+    let saved: Ref[Option[cache::Cache[isize, string]]] = Ref::new(Option::None);
+    let values = testing::expect_ok(
+        cache::Cache::with_policy(
+            cache::Options { clock: clock.clock(), ..cache::Options::new(8) },
+            |value: string| value,
+            |key: isize, _: string, cause| {
+                if cause == cache::RemovalCause::Expired {
+                    events.push(key);
+                    testing::assert_eq(
+                        testing::expect_some(saved.get(), "cache").stats().entries,
+                        0,
+                    );
+                }
+            },
+        ),
+        "cache",
+    );
+    saved.set(Option::Some(values));
+    for key in 0..8 {
+        testing::assert_ok(values.insert_with_expiry(key, "value", 1, cache::Expiry::ttl(4)));
+    }
+    testing::assert_ok(clock.advance(4));
+    testing::assert_eq(testing::expect_ok(values.prune(), "prune"), 8);
+    testing::assert_eq(events.len(), 8);
+    for key in 0..8 {
+        testing::assert(events.contains(key));
+    }
+    testing::assert_eq(testing::expect_ok(values.prune(), "again"), 0);
+    testing::assert_eq(values.stats().evictions, 0);
+}
+
+#[test]
+fn overflowing_relative_deadlines_stay_live_but_exact_maximum_and_absolute_expire() -> () {
+    let clock = cache::ManualClock::new();
+    testing::assert_ok(clock.advance(9223372036854775805));
+    let values = make(cache::Options { clock: clock.clock(), ..cache::Options::new(4) });
+    testing::assert_ok(values.insert_with_expiry(1, "overflow", 1, cache::Expiry::ttl(3)));
+    testing::assert_ok(values.insert_with_expiry(2, "exact maximum", 1, cache::Expiry::ttl(2)));
+    testing::assert_ok(
+        values.insert_with_expiry(
+            3,
+            "absolute",
+            1,
+            cache::Expiry { ttl_ms: 3, tti_ms: 3, deadline_ms: Option::Some(9223372036854775807) },
+        ),
+    );
+    testing::assert_ok(clock.advance(2));
+    testing::assert_eq(testing::expect_ok(values.prune(), "prune"), 2);
+    testing::assert(get(values, 1) == Option::Some("overflow"));
+    testing::assert_none(get(values, 2));
+    testing::assert_none(get(values, 3));
+}
