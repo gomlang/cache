@@ -182,13 +182,22 @@ expiration-only. Live entry, weight, loader and waiter gauges do not saturate.
 
 ## Complexity and scope
 
-With no expiring entries, hash lookup, LRU touch, removal, and each eviction are
-expected O(1). Expiration currently scans the live table in O(n) time and O(n)
-temporary storage whenever any entry has an expiration policy. Key listing and
-clear are O(n). Insertion can evict O(n) entries. Storage is O(n + active loaders +
-waiters), excluding user values and callback working memory. The cache maintains
+Expiration uses an indexed minimum-deadline heap with at most one record per
+live entry. Reads check the earliest deadline in O(1), then remove each due entry
+in O(log n); they no longer copy and scan the whole table. TTI refresh updates the
+existing record in O(log n), while TTL-only reads retain expected O(1) LRU work.
+Insertion, replacement, removal and each eviction cost O(log n) for expiring
+entries, and expected O(1) without expiry. Repeated refresh/replacement does not
+accumulate stale heap records. Equal-deadline callback order is unspecified.
+Relative deadlines beyond i64::MAX cannot expire in the clock's representable
+range; they never wrap or expire prematurely at i64::MAX. Absolute deadlines and
+representable relative deadlines still expire at equality.
+
+Key listing is O(n); clearing expiring entries is O(n log n). Insertion can evict
+O(n) entries. Storage is O(n + active loaders + waiters), excluding user values
+and callback working memory. The cache maintains
 one short state lock; it provides strict coherent bounds rather than sharded or
-approximate admission. There is no periodic maintenance thread, expiry heap,
+approximate admission. There is no periodic maintenance thread,
 TinyLFU, refresh-ahead, stale-while-revalidate, persistence, or distributed protocol.
 
 ## Validation

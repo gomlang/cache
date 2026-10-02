@@ -120,10 +120,6 @@ impl Expiry {
         }
     }
 
-    fn enabled(self: Expiry) -> bool {
-        self.ttl_ms > 0 || self.tti_ms > 0 || self.deadline_ms.is_some()
-    }
-
     fn expired(self: Expiry, now: i64, created: i64, used: i64) -> bool {
         self.ttl_ms > 0 && now - created >= self.ttl_ms
             || self.tti_ms > 0 && now - used >= self.tti_ms

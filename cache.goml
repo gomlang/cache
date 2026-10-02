@@ -23,7 +23,7 @@ struct State[K, V] {
     flights: HashMap[K, Flight[V]],
     oldest: Option[K],
     newest: Option[K],
-    expiring: isize,
+    deadlines: ExpiryQueue[K],
     now: i64,
     next_id: u64,
     stats: Stats,
@@ -71,7 +71,7 @@ impl[K: Eq + Hash, V] Cache[K, V] {
                         flights: HashMap::new(),
                         oldest: Option::None,
                         newest: Option::None,
-                        expiring: 0,
+                        deadlines: ExpiryQueue::new(),
                         now: 0,
                         next_id: 1,
                         stats: empty_stats(),
@@ -183,9 +183,7 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         if cause == RemovalCause::Expired {
             state.stats.expirations = increment(state.stats.expirations);
         }
-        if entry.expiry.enabled() {
-            state.expiring -= 1;
-        }
+        state.deadlines.remove(key);
         self.state.set(state);
         removals.push(Removal { key, value: entry.value, cause });
         Option::Some(entry.value)
@@ -197,12 +195,12 @@ impl[K: Eq + Hash, V] Cache[K, V] {
             state.now = observed;
         }
         self.state.set(state);
-        if state.expiring == 0 {
-            return
-        }
-        for (key, entry) in state.entries.entries() {
-            if entry.expiry.expired(state.now, entry.created, entry.used) {
-                let _ = self.remove_locked(key, RemovalCause::Expired, removals);
+        while let Some((key, deadline)) = state.deadlines.first() {
+            if deadline > state.now {
+                break
+            }
+            if self.remove_locked(key, RemovalCause::Expired, removals).is_none() {
+                state.deadlines.remove(key);
             }
         }
     }
@@ -222,7 +220,14 @@ impl[K: Eq + Hash, V] Cache[K, V] {
             Some(entry) => {
                 if touch {
                     self.unlink(key, entry);
-                    self.append(key, Entry { used: self.state.get().now, ..entry });
+                    let now = self.state.get().now;
+                    self.append(key, Entry { used: now, ..entry });
+                    if entry.expiry.tti_ms > 0 {
+                        self.state.get().deadlines.set(
+                            key,
+                            entry.expiry.next_deadline(entry.created, now),
+                        );
+                    }
                 }
                 Option::Some(entry.value)
             },
@@ -313,9 +318,7 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         state.stats.entries += 1;
         state.stats.weight += value.weight;
         state.stats.insertions = increment(state.stats.insertions);
-        if expiry.enabled() {
-            state.expiring += 1;
-        }
+        state.deadlines.set(key, expiry.next_deadline(now, now));
         self.state.set(state);
         old
     }

@@ -1,0 +1,111 @@
+package cache;
+
+struct ExpiryQueue[K] {
+    values: Vec[(K, i64)],
+    positions: HashMap[K, isize],
+}
+
+impl[K: Eq + Hash] ExpiryQueue[K] {
+    fn new() -> ExpiryQueue[K] {
+        ExpiryQueue { values: Vec::new(), positions: HashMap::new() }
+    }
+
+    fn swap(self: ExpiryQueue[K], left: isize, right: isize) -> () {
+        let a = self.values[left];
+        let b = self.values[right];
+        self.values[left] = b;
+        self.values[right] = a;
+        self.positions.set(a.0, right);
+        self.positions.set(b.0, left);
+    }
+
+    fn rise(self: ExpiryQueue[K], start: isize) -> isize {
+        let mut index = start;
+        while index > 0 {
+            let parent = (index - 1) / 2;
+            if self.values[parent].1 <= self.values[index].1 {
+                break
+            }
+            self.swap(parent, index);
+            index = parent;
+        }
+        index
+    }
+
+    fn sink(self: ExpiryQueue[K], start: isize) -> () {
+        let mut index = start;
+        while index < self.values.len() / 2 {
+            let left = index * 2 + 1;
+            let right = left + 1;
+            let child = if right < self.values.len() && self.values[right].1 < self.values[left].1 {
+                right
+            } else {
+                left
+            };
+            if self.values[index].1 <= self.values[child].1 {
+                break
+            }
+            self.swap(index, child);
+            index = child;
+        }
+    }
+
+    fn remove(self: ExpiryQueue[K], key: K) -> () {
+        if let Some(index) = self.positions.remove_value(key) {
+            if let Some(last) = self.values.pop() {
+                if index < self.values.len() {
+                    self.values[index] = last;
+                    self.positions.set(last.0, index);
+                    let position = self.rise(index);
+                    self.sink(position);
+                }
+            }
+        }
+    }
+
+    fn set(self: ExpiryQueue[K], key: K, deadline: Option[i64]) -> () {
+        if let Some(deadline) = deadline {
+            if let Some(index) = self.positions.get(key) {
+                if self.values[index].1 == deadline {
+                    return
+                }
+                self.values[index] = (key, deadline);
+                let position = self.rise(index);
+                self.sink(position);
+            } else {
+                let index = self.values.len();
+                self.values.push((key, deadline));
+                self.positions.set(key, index);
+                let _ = self.rise(index);
+            }
+        } else {
+            self.remove(key);
+        }
+    }
+
+    fn first(self: ExpiryQueue[K]) -> Option[(K, i64)] {
+        self.values.get_checked(0)
+    }
+}
+
+fn earlier(left: Option[i64], right: i64) -> Option[i64] {
+    Option::Some(
+        match left {
+            Some(value) if value < right => value,
+            _ => right,
+        },
+    )
+}
+
+impl Expiry {
+    fn next_deadline(self: Expiry, created: i64, used: i64) -> Option[i64] {
+        let mut result = self.deadline_ms;
+        if self.ttl_ms > 0 && created <= 9223372036854775807 - self.ttl_ms {
+            result = earlier(result, created + self.ttl_ms);
+        }
+        if self.tti_ms > 0 && used <= 9223372036854775807 - self.tti_ms {
+            result = earlier(result, used + self.tti_ms);
+        }
+        result
+    }
+}
