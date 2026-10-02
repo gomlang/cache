@@ -1,0 +1,19 @@
+package tests;
+
+use ecosystem::cache;
+use std::testing;
+
+#[test]
+fn batch_invalidation_is_exported() -> () {
+    let values: cache::Cache[string, isize] = testing::expect_ok(
+        cache::Cache::new(cache::Options::new(2)),
+        "cache",
+    );
+    testing::assert_ok(values.insert("a", 1, 1));
+    testing::assert_ok(values.insert("b", 2, 1));
+    testing::assert_eq(
+        testing::expect_ok(values.invalidate_many(Vec::from_array(["a", "b", "a"])), "batch"),
+        2,
+    );
+    testing::assert_eq(values.stats().entries, 0);
+}

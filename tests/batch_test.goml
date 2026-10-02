@@ -1,0 +1,93 @@
+package tests;
+
+use ecosystem::cache;
+use std::context;
+use std::task;
+use std::testing;
+
+#[test]
+fn batch_invalidation_commits_before_callbacks_and_counts_live_entries_once() -> () {
+    let clock = cache::ManualClock::new();
+    let slot: Ref[Option[cache::Cache[isize, string]]] = Ref::new(Option::None);
+    let callbacks = Ref::new(0);
+    let values: cache::Cache[isize, string] = testing::expect_ok(
+        cache::Cache::with_policy(
+            cache::Options { clock: clock.clock(), ..cache::Options::new(4) },
+            |value: string| value,
+            |_: isize, _, cause| {
+                if cause == cache::RemovalCause::Removed {
+                    let values = testing::expect_some(slot.get(), "cache");
+                    testing::assert_none(testing::expect_ok(values.peek(1), "first removed"));
+                    testing::assert_none(testing::expect_ok(values.peek(2), "second removed"));
+                    callbacks.set(callbacks.get() + 1);
+                }
+            },
+        ),
+        "cache",
+    );
+    slot.set(Option::Some(values));
+    testing::assert_ok(values.insert(1, "one", 1));
+    testing::assert_ok(values.insert(2, "two", 1));
+    testing::assert_ok(values.insert_with_expiry(3, "expired", 1, cache::Expiry::ttl(1)));
+    testing::assert_ok(clock.advance(1));
+    testing::assert_eq(
+        testing::expect_ok(values.invalidate_many(Vec::from_array([1, 1, 2, 3, 4])), "batch"),
+        2,
+    );
+    testing::assert_eq(callbacks.get(), 2);
+    testing::assert_eq(values.stats().expirations, 1);
+    values.close();
+    let empty: Vec[isize] = Vec::new();
+    testing::assert_err(values.invalidate_many(empty));
+    slot.set(Option::None);
+}
+
+#[test]
+fn batch_invalidation_cancels_absent_loads_without_resurrecting_results() -> () {
+    let values: cache::Cache[isize, string] = testing::expect_ok(
+        cache::Cache::new(cache::Options::new(3)),
+        "cache",
+    );
+    let started = Channel::new(2);
+    let release: Channel[()] = Channel::new(0);
+    task::scope(
+        |scope| {
+            let workers = Vec::new();
+            for key in Vec::from_array([1, 2]) {
+                workers.push(
+                    scope.spawn(
+                        |_| values.get_or_try_insert_with(
+                            context::Context::background(),
+                            key,
+                            |_| {
+                                started.send(());
+                                let _ = release.recv();
+                                Result::Ok(cache::Loaded::new("obsolete", 1))
+                            },
+                        ),
+                    ),
+                );
+            }
+            let _ = started.recv();
+            let _ = started.recv();
+            testing::assert_eq(
+                testing::expect_ok(
+                    values.invalidate_many(Vec::from_array([1, 2, 1])),
+                    "invalidate loads",
+                ),
+                0,
+            );
+            testing::assert_ok(values.insert(1, "replacement", 1));
+            release.close();
+            for worker in workers {
+                testing::assert_eq(
+                    testing::expect_err(worker.join(), "invalidated"),
+                    cache::Error::Invalidated,
+                );
+            }
+        },
+    );
+    testing::assert(testing::expect_ok(values.get(1), "new value") == Option::Some("replacement"));
+    testing::assert_none(testing::expect_ok(values.get(2), "absent"));
+    testing::assert_eq(values.stats().inflight, 0);
+}
