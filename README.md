@@ -28,8 +28,8 @@ fn cached_configuration() -> Result[string, cache::Error] {
 ```
 
 Declare `"ecosystem::cache" = "0.1.0"` in the module root's `[dependencies]`.
-The versioned consumer under `consumer` exercises independently
-loaded package interfaces, generic specialization, and the JSON oracle protocol.
+The example under `examples/basic` exercises generic specialization and the JSON
+oracle protocol. `goml verify` also checks independently loaded package interfaces.
 
 ## Operations and bounds
 
@@ -187,9 +187,9 @@ TinyLFU, refresh-ahead, stale-while-revalidate, persistence, or distributed prot
 
 Run `(cd ../verification && just ecosystem-test cache)` from this library repository. It creates an
 isolated versioned registry, formats/checks the projects, runs 22 black-box library
-tests and independent consumer tests, verifies a stable cached build, and runs:
+tests and example tests and independent downstream verification, verifies a stable cached build, and runs:
 
-- 160 deterministic histories checked by native consumer tests against retained
+- 160 deterministic histories checked by native example tests against retained
   independent `OrderedDict` reference results, with 42,240
   operations and 20,303 query results across LRU, weights, TTL, TTI, Unicode values,
   replacement, removal, and clear.
@@ -201,3 +201,15 @@ tests and independent consumer tests, verifies a stable cached build, and runs:
 The regression suite also covers exact expiration boundaries, clock overflow and
 backward samples, maximum weights, publication-time cancellation, shared failures,
 and expiry notifications that reenter a completed singleflight.
+
+## Development and examples
+
+Requires GoML 0.1.55 or newer. The `examples/basic/` example shares the root manifest; test-only helpers are declared in `[dev-dependencies]`. From the library root, run:
+
+```sh
+goml run --example basic
+goml test
+goml verify --timeout 300s
+```
+
+`goml test` builds the example and runs its tests. `goml verify` repeats the example checks as an independent module against an isolated registry snapshot. `(cd ../verification && just ecosystem-test cache)` also retains the library-specific smoke and compatibility checks.

@@ -1,6 +1,6 @@
 package tests;
 
-use consumer::cache;
+use ecosystem::cache::examples::basic as cache;
 
 #[test]
 fn independent_registry_consumer() -> () {
