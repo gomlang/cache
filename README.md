@@ -69,6 +69,14 @@ value. Reads do not expose expired values. `remove` also cancels loading for an
 absent or expired key. `clear` and `close` classify their removals as `Cleared` and
 `Closed`; they do not run a separate expiration pass first.
 
+`invalidate_many(keys)` atomically invalidates a selected set of keys under one
+state lock and returns the number of live entries removed. It samples the clock
+and expires stale values once, cancels active loads even for absent keys, and
+ignores duplicate keys. Expired values do not count in the return value. Removal
+callbacks run after the entire batch commits and can reenter the cache. Other
+operations cannot observe a partially invalidated batch. The supplied key vector
+and its keys must not be mutated concurrently with the call.
+
 ## Expiration and clocks
 
 `Expiry` supports a TTL since insertion, a TTI since the last successful `get`

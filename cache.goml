@@ -366,6 +366,28 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         self.remove(key).map(|_| ())
     }
 
+    pub fn invalidate_many(self: Cache[K, V], keys: Vec[K]) -> Result[isize, Error] {
+        let now = self.clock();
+        let removals = Vec::new();
+        self.lock();
+        let result = self.open().map(
+            |_| {
+                self.maintain(now, removals);
+                let mut removed = 0;
+                for key in keys {
+                    self.invalidate_locked(key, Error::Invalidated);
+                    if self.remove_locked(key, RemovalCause::Removed, removals).is_some() {
+                        removed += 1;
+                    }
+                }
+                removed
+            },
+        );
+        self.gate.send(());
+        self.emit(removals);
+        result
+    }
+
     fn clear_locked(self: Cache[K, V], cause: RemovalCause, removals: Vec[Removal[K, V]]) -> () {
         let state = self.state.get();
         for (key, _) in state.entries.entries() {
