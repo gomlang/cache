@@ -42,6 +42,7 @@ oracle protocol. `goml verify` also checks independently loaded package interfac
 | `get_many(keys)` / `peek_many(keys)` | Read a batch using the corresponding single-key policy |
 | `insert(key, value, weight)` | Replace and return the previous live value |
 | `insert_with_expiry(key, value, weight, expiry)` | Override expiration for one insertion |
+| `insert_many(entries)` | Atomically apply ordered `(key, Loaded[value])` insertions |
 | `remove(key)` / `invalidate(key)` | Remove a value and invalidate any current load, including absent keys |
 | `clear()` | Remove all values and invalidate all current loads; keep the cache open |
 | `prune()` | Remove expired values and return the number removed |
@@ -89,6 +90,30 @@ a callback may change the cache before the call returns. Each present result is
 copied separately using the configured policy. Output storage is proportional to
 the supplied key count, which the caller must bound. Do not mutate the key vector
 or its keys concurrently with a call.
+
+`insert_many(Vec[(K, Loaded[V])])` snapshots the entry vector and validates every weight and expiration policy
+before copying inputs, sampling the clock or acquiring the state lock. Invalid
+entries therefore leave values, expiration, statistics and in-flight loads
+unchanged and invoke no callbacks. Owned value copies are prepared outside the
+lock, then the entire batch commits under one lock using one clock sample and
+expiration pass. Empty batches still check closure and perform expiration.
+
+Atomicity means other cache operations cannot observe a partially applied batch.
+Items use the normal insertion policy in input order, including repeated keys,
+per-item expiry, replacement, load invalidation and LRU eviction. The returned
+`Vec[Option[V]]` contains each item's previous live value at its own insertion
+step; an earlier item can be evicted or replaced by a later item in the same
+batch. Aggregate size need not fit the cache. No intermediate admission state
+is exposed, but statistics and removal notifications count every step.
+
+Copies and notifications run outside the lock and may reenter the cache. All
+notifications run after the complete batch commits. Callback side effects and
+panics have no rollback semantics; the existing callback contract requires
+normal return. Output values are independently copied. Storage and preparation
+work scale with input length plus removals; callers must bound batch size and
+must not mutate the vector, keys or input values concurrently with the call.
+A copy callback may edit the original entry vector without changing the saved
+batch; the snapshot does not deep-copy keys or value contents.
 
 ## Expiration and clocks
 

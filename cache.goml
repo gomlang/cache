@@ -384,6 +384,45 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         result.map(|value| value.map(|value| (self.copy)(value)))
     }
 
+    pub fn insert_many(self: Cache[K, V], entries: Vec[(K, Loaded[V])]) -> Result[
+        Vec[Option[V]],
+        Error,
+    ] {
+        let entries = entries.copy();
+        for (_, value) in entries {
+            self.validate_loaded(value)?;
+        }
+        let owned = Vec::new();
+        for (key, value) in entries {
+            owned.push((key, Loaded { value: (self.copy)(value.value), ..value }));
+        }
+        let now = self.clock();
+        let removals = Vec::new();
+        self.lock();
+        let result = self.open().map(
+            |_| {
+                self.maintain(now, removals);
+                let previous = Vec::new();
+                for (key, value) in owned {
+                    self.invalidate_locked(key, Error::Invalidated);
+                    previous.push(self.insert_locked(key, value, removals));
+                }
+                previous
+            },
+        );
+        self.gate.send(());
+        self.emit(removals);
+        result.map(
+            |previous| {
+                let copied = Vec::new();
+                for value in previous {
+                    copied.push(value.map(|value| (self.copy)(value)));
+                }
+                copied
+            },
+        )
+    }
+
     pub fn remove(self: Cache[K, V], key: K) -> Result[Option[V], Error] {
         let now = self.clock();
         let removals = Vec::new();
