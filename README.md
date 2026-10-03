@@ -39,6 +39,7 @@ oracle protocol. `goml verify` also checks independently loaded package interfac
 | `Cache::with_policy(options, copy, removed)` | Custom value isolation and removal notifications |
 | `get(key)` | Return a value, update LRU and idle time, count a hit or miss |
 | `peek(key)` | Return a value without touching LRU, idle time, or hit counters |
+| `get_many(keys)` / `peek_many(keys)` | Read a batch using the corresponding single-key policy |
 | `insert(key, value, weight)` | Replace and return the previous live value |
 | `insert_with_expiry(key, value, weight, expiry)` | Override expiration for one insertion |
 | `remove(key)` / `invalidate(key)` | Remove a value and invalidate any current load, including absent keys |
@@ -76,6 +77,18 @@ ignores duplicate keys. Expired values do not count in the return value. Removal
 callbacks run after the entire batch commits and can reenter the cache. Other
 operations cannot observe a partially invalidated batch. The supplied key vector
 and its keys must not be mutated concurrently with the call.
+
+`get_many(keys)` and `peek_many(keys)` return `Vec[Option[V]]` in input order,
+including a result for every duplicate or missing key. Each batch samples the
+clock once, expires due entries once, and performs all lookups under one lock.
+`get_many` counts every requested key and touches hits in input order; `peek_many`
+does not change LRU, idle deadlines or hit/miss counters. Both reject a closed
+cache, including empty batches. Copies and expiration callbacks run after the
+lock is released and may reenter the cache. Results describe the lookup batch;
+a callback may change the cache before the call returns. Each present result is
+copied separately using the configured policy. Output storage is proportional to
+the supplied key count, which the caller must bound. Do not mutate the key vector
+or its keys concurrently with a call.
 
 ## Expiration and clocks
 

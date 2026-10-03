@@ -258,6 +258,41 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         self.read(key, false)
     }
 
+    fn read_many(self: Cache[K, V], keys: Vec[K], touch: bool) -> Result[Vec[Option[V]], Error] {
+        let now = self.clock();
+        let removals = Vec::new();
+        self.lock();
+        let result = self.open().map(
+            |_| {
+                self.maintain(now, removals);
+                let values = Vec::with_capacity(keys.len());
+                for key in keys {
+                    values.push(self.lookup_locked(key, touch, touch));
+                }
+                values
+            },
+        );
+        self.gate.send(());
+        self.emit(removals);
+        result.map(
+            |values| {
+                let copies = Vec::with_capacity(values.len());
+                for value in values {
+                    copies.push(value.map(|value| (self.copy)(value)));
+                }
+                copies
+            },
+        )
+    }
+
+    pub fn get_many(self: Cache[K, V], keys: Vec[K]) -> Result[Vec[Option[V]], Error] {
+        self.read_many(keys, true)
+    }
+
+    pub fn peek_many(self: Cache[K, V], keys: Vec[K]) -> Result[Vec[Option[V]], Error] {
+        self.read_many(keys, false)
+    }
+
     fn validate_loaded(self: Cache[K, V], value: Loaded[V]) -> Result[(), Error] {
         if value.weight < 0 {
             return Result::Err(Error::InvalidWeight)

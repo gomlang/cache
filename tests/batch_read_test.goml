@@ -1,0 +1,96 @@
+package tests;
+
+use ecosystem::cache;
+use std::testing;
+
+#[test]
+fn batch_reads_preserve_order_duplicates_statistics_and_lru() -> () {
+    let values: cache::Cache[isize, string] = testing::expect_ok(
+        cache::Cache::new(cache::Options::new(3)),
+        "cache",
+    );
+    for key in 1..4 {
+        testing::assert_ok(values.insert(key, key.to_string(), 1));
+    }
+    let keys = Vec::from_array([2, 4, 1, 2]);
+    let expected = Vec::from_array(
+        [Option::Some("2"), Option::None, Option::Some("1"), Option::Some("2")],
+    );
+    testing::assert(testing::expect_ok(values.peek_many(keys), "peek") == expected);
+    testing::assert_eq(values.stats().hits, 0);
+    testing::assert_eq(values.stats().misses, 0);
+    testing::assert(testing::expect_ok(values.keys_lru(), "LRU") == Vec::from_array([1, 2, 3]));
+    testing::assert(testing::expect_ok(values.get_many(keys), "get") == expected);
+    testing::assert_eq(values.stats().hits, 3);
+    testing::assert_eq(values.stats().misses, 1);
+    testing::assert(testing::expect_ok(values.keys_lru(), "LRU") == Vec::from_array([3, 1, 2]));
+    testing::assert_ok(values.insert(4, "4", 1));
+    testing::assert_none(testing::expect_ok(values.peek(3), "evicted"));
+    testing::assert_eq(testing::expect_ok(values.get_many(Vec::new()), "empty").len(), 0);
+    values.close();
+    testing::assert_err(values.get_many(Vec::new()));
+    testing::assert_err(values.peek_many(keys));
+}
+
+#[test]
+fn batch_expiration_uses_one_clock_sample_and_touches_only_gets() -> () {
+    let clock = cache::ManualClock::new();
+    let reads = Ref::new(0);
+    let options = cache::Options {
+        clock: cache::Clock::new(
+            || {
+                reads.set(reads.get() + 1);
+                clock.now()
+            },
+        ),
+        expiry: cache::Expiry::idle(10),
+        ..cache::Options::new(3),
+    };
+    let values: cache::Cache[isize, string] = testing::expect_ok(
+        cache::Cache::new(options),
+        "cache",
+    );
+    testing::assert_ok(values.insert(1, "one", 1));
+    testing::assert_ok(values.insert(2, "two", 1));
+    testing::assert_ok(clock.advance(9));
+    reads.set(0);
+    testing::assert_ok(values.get_many(Vec::from_array([1, 1])));
+    testing::assert_eq(reads.get(), 1);
+    testing::assert_ok(values.peek_many(Vec::from_array([2])));
+    testing::assert_ok(clock.advance(1));
+    let batch = testing::expect_ok(values.get_many(Vec::from_array([1, 2])), "expired");
+    testing::assert(batch == Vec::from_array([Option::Some("one"), Option::None]));
+    testing::assert_eq(values.stats().expirations, 1);
+}
+
+#[test]
+fn batch_value_copies_run_after_unlock_and_are_independent_for_duplicates() -> () {
+    let slot: Ref[Option[cache::Cache[isize, Vec[isize]]]] = Ref::new(Option::None);
+    let copies = Ref::new(0);
+    let values: cache::Cache[isize, Vec[isize]] = testing::expect_ok(
+        cache::Cache::with_policy(
+            cache::Options::new(2),
+            |value: Vec[isize]| {
+                if let Some(values) = slot.get() {
+                    testing::assert_eq(values.stats().hits, 2);
+                    copies.set(copies.get() + 1);
+                }
+                value.copy()
+            },
+            |_, _, _| (),
+        ),
+        "cache",
+    );
+    testing::assert_ok(values.insert(1, Vec::from_array([7]), 1));
+    slot.set(Option::Some(values));
+    let batch = testing::expect_ok(values.get_many(Vec::from_array([1, 1, 2])), "batch");
+    testing::assert_eq(copies.get(), 2);
+    let first = testing::expect_some(batch[0], "first");
+    first[0] = 9;
+    testing::assert_eq(testing::expect_some(batch[1], "second")[0], 7);
+    slot.set(Option::None);
+    testing::assert_eq(
+        testing::expect_some(testing::expect_ok(values.peek(1), "stored"), "present")[0],
+        7,
+    );
+}

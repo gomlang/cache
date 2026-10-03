@@ -1,0 +1,19 @@
+package tests;
+
+use ecosystem::cache;
+use std::testing;
+
+#[test]
+fn downstream_batch_reads_keep_absent_positions() -> () {
+    let values: cache::Cache[string, isize] = testing::expect_ok(
+        cache::Cache::new(cache::Options::new(2)),
+        "cache",
+    );
+    testing::assert_ok(values.insert("a", 7, 1));
+    let keys = Vec::from_array(["missing", "a", "a"]);
+    let expected = Vec::from_array([Option::None, Option::Some(7), Option::Some(7)]);
+    testing::assert(testing::expect_ok(values.peek_many(keys), "peek") == expected);
+    testing::assert(testing::expect_ok(values.get_many(keys), "get") == expected);
+    testing::assert_eq(values.stats().hits, 2);
+    testing::assert_eq(values.stats().misses, 1);
+}
