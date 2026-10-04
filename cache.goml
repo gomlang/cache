@@ -205,6 +205,22 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         }
     }
 
+    fn touch_newest(self: Cache[K, V], key: K, entry: Entry[K, V], now: i64) -> () {
+        // Equal keys may carry different data; preserve the caller's key in the links and table.
+        let mut state = self.state.get();
+        if let Some(previous) = entry.previous {
+            if let Some(value) = state.entries.get(previous) {
+                state.entries.set(previous, Entry { next: Option::Some(key), ..value });
+            }
+        } else {
+            state.oldest = Option::Some(key);
+        }
+        state.entries.remove(key);
+        state.entries.set(key, Entry { used: now, ..entry });
+        state.newest = Option::Some(key);
+        self.state.set(state);
+    }
+
     fn lookup_locked(self: Cache[K, V], key: K, touch: bool, count: bool) -> Option[V] {
         let entry = self.state.get().entries.get(key);
         if count {
@@ -219,9 +235,13 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         match entry {
             Some(entry) => {
                 if touch {
-                    self.unlink(key, entry);
                     let now = self.state.get().now;
-                    self.append(key, Entry { used: now, ..entry });
+                    if entry.next.is_none() {
+                        self.touch_newest(key, entry, now);
+                    } else {
+                        self.unlink(key, entry);
+                        self.append(key, Entry { used: now, ..entry });
+                    }
                     if entry.expiry.tti_ms > 0 {
                         self.state.get().deadlines.set(
                             key,
