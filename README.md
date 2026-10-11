@@ -240,7 +240,7 @@ TinyLFU, refresh-ahead, stale-while-revalidate, persistence, or distributed prot
 
 ## Validation
 
-Run `(cd ../verification && just ecosystem-test cache)` from this library repository. It creates an
+Run `(cd ../workflows && just ecosystem-test cache)` from this library repository. It creates an
 isolated registry, formats/checks the projects, runs 22 black-box library
 tests and example tests and independent downstream verification, verifies a stable cached build, and runs:
 
@@ -259,12 +259,12 @@ and expiry notifications that reenter a completed singleflight.
 
 ## Development and examples
 
-Requires the [current GoML toolchain](https://github.com/gomlang/verification/blob/main/ci/toolchain.json) with unversioned registry support. The `examples/basic/` example shares the root manifest; test-only helpers are declared in `[dev-dependencies]`. From the library root, run:
+Requires the [current GoML toolchain](https://github.com/gomlang/workflows/blob/main/ci/toolchain.json) with unversioned registry support. The `examples/basic/` example shares the root manifest; test-only helpers are declared in `[dev-dependencies]`. From the library root, run:
 
 ```sh
 goml run --example basic
 goml test
-(cd ../verification && just ecosystem-test cache)
+(cd ../workflows && just ecosystem-test cache)
 ```
 
-`goml test` builds the example and runs its tests. `(cd ../verification && just ecosystem-test cache)` runs the library-specific smoke and compatibility checks.
+`goml test` builds the example and runs its tests. `(cd ../workflows && just ecosystem-test cache)` runs the library-specific smoke and compatibility checks.
