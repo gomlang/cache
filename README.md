@@ -27,9 +27,9 @@ fn cached_configuration() -> Result[string, cache::Error] {
 }
 ```
 
-Declare `"ecosystem::cache" = "0.1.0"` in the module root's `[dependencies]`.
+Declare `"ecosystem::cache" = true` in the module root's `[dependencies]`.
 The example under `examples/basic` exercises generic specialization and the JSON
-oracle protocol. `goml verify` also checks independently loaded package interfaces.
+oracle protocol. The ecosystem verifier also checks cached package interfaces.
 
 ## Operations and bounds
 
@@ -241,7 +241,7 @@ TinyLFU, refresh-ahead, stale-while-revalidate, persistence, or distributed prot
 ## Validation
 
 Run `(cd ../verification && just ecosystem-test cache)` from this library repository. It creates an
-isolated versioned registry, formats/checks the projects, runs 22 black-box library
+isolated registry, formats/checks the projects, runs 22 black-box library
 tests and example tests and independent downstream verification, verifies a stable cached build, and runs:
 
 - 160 deterministic histories checked by native example tests against retained
@@ -259,12 +259,12 @@ and expiry notifications that reenter a completed singleflight.
 
 ## Development and examples
 
-Requires GoML 0.1.56 or newer. The `examples/basic/` example shares the root manifest; test-only helpers are declared in `[dev-dependencies]`. From the library root, run:
+Requires the [current GoML toolchain](https://github.com/gomlang/verification/blob/main/ci/toolchain.json) with unversioned registry support. The `examples/basic/` example shares the root manifest; test-only helpers are declared in `[dev-dependencies]`. From the library root, run:
 
 ```sh
 goml run --example basic
 goml test
-goml verify --timeout 300s
+(cd ../verification && just ecosystem-test cache)
 ```
 
-`goml test` builds the example and runs its tests. `goml verify` repeats the example checks as an independent module against an isolated registry snapshot. `(cd ../verification && just ecosystem-test cache)` also retains the library-specific smoke and compatibility checks.
+`goml test` builds the example and runs its tests. `(cd ../verification && just ecosystem-test cache)` runs the library-specific smoke and compatibility checks.
