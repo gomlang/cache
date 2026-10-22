@@ -27,6 +27,8 @@ struct State[K, V] {
     now: i64,
     next_id: u64,
     stats: Stats,
+    max_entries: isize,
+    max_weight: i64,
 }
 
 struct Removal[K, V] {
@@ -75,6 +77,8 @@ impl[K: Eq + Hash, V] Cache[K, V] {
                         now: 0,
                         next_id: 1,
                         stats: empty_stats(),
+                        max_entries: options.max_entries,
+                        max_weight: options.max_weight,
                     },
                 ),
                 options,
@@ -317,7 +321,7 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         if value.weight < 0 {
             return Result::Err(Error::InvalidWeight)
         }
-        if value.weight > self.options.max_weight {
+        if value.weight > self.capacity().1 {
             return Result::Err(Error::TooHeavy)
         }
         value.expiry.unwrap_or(self.options.expiry).validate()
@@ -347,8 +351,8 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         }
         loop {
             let state = self.state.get();
-            if state.stats.entries < self.options.max_entries
-                && state.stats.weight <= self.options.max_weight - value.weight {
+            if state.stats.entries < state.max_entries
+                && state.stats.weight <= state.max_weight - value.weight {
                 break
             }
             if let Some(oldest) = state.oldest {
@@ -394,6 +398,8 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         self.lock();
         let result = if self.state.get().stats.closed {
             Result::Err(Error::Closed)
+        } else if loaded.weight > self.state.get().max_weight {
+            Result::Err(Error::TooHeavy)
         } else {
             self.maintain(now, removals);
             self.invalidate_locked(key, Error::Invalidated);
@@ -419,15 +425,20 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         let now = self.clock();
         let removals = Vec::new();
         self.lock();
-        let result = self.open().map(
+        let result = self.open().and_then(
             |_| {
+                for (_, value) in owned {
+                    if value.weight > self.state.get().max_weight {
+                        return Result::Err(Error::TooHeavy)
+                    }
+                }
                 self.maintain(now, removals);
                 let previous = Vec::new();
                 for (key, value) in owned {
                     self.invalidate_locked(key, Error::Invalidated);
                     previous.push(self.insert_locked(key, value, removals));
                 }
-                previous
+                Result::Ok(previous)
             },
         );
         self.gate.send(());
@@ -511,6 +522,43 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         }
         self.gate.send(());
         self.emit(removals);
+        result
+    }
+
+    pub fn resize(self: Cache[K, V], max_entries: isize, max_weight: i64) -> Result[(), Error] {
+        if max_entries < 1 || max_weight < 1 {
+            return Result::Err(Error::InvalidOptions("capacities must be positive"))
+        }
+        let now = self.clock();
+        let removals = Vec::new();
+        self.lock();
+        let result = self.open();
+        if result.is_ok() {
+            let state = self.state.get();
+            self.state.set(State { max_entries, max_weight, ..state });
+            self.maintain(now, removals);
+            loop {
+                let state = self.state.get();
+                if state.stats.entries <= max_entries && state.stats.weight <= max_weight {
+                    break
+                }
+                if let Some(oldest) = state.oldest {
+                    let _ = self.remove_locked(oldest, RemovalCause::Capacity, removals);
+                } else {
+                    break
+                }
+            }
+        }
+        self.gate.send(());
+        self.emit(removals);
+        result
+    }
+
+    pub fn capacity(self: Cache[K, V]) -> (isize, i64) {
+        self.lock();
+        let state = self.state.get();
+        let result = (state.max_entries, state.max_weight);
+        self.gate.send(());
         result
     }
 

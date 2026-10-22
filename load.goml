@@ -84,6 +84,9 @@ impl[K: Eq + Hash, V] Cache[K, V] {
         if current {
             state.flights.remove(key);
             let result = match load_context.check().and_then(|_| value) {
+                Ok(value) if value.weight > self.state.get().max_weight => Result::Err(
+                    Error::TooHeavy,
+                ),
                 Ok(value) => {
                     let _ = self.insert_locked(key, value, removals);
                     Result::Ok(value.value)

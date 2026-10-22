@@ -268,3 +268,13 @@ goml test
 ```
 
 `goml test` builds the example and runs its tests. `(cd ../workflows && just ecosystem-test cache)` runs the library-specific smoke and compatibility checks.
+
+`Cache.resize(max_entries, max_weight)` atomically updates positive capacity
+limits and evicts least-recently-used entries until both limits hold. Expired
+entries are removed first. Invalid capacities leave the cache untouched; a
+closed cache rejects resizing. `capacity()` returns the current pair, including
+after close. Removal callbacks run after unlocking and may reenter the cache.
+In-flight loads remain coordinated: their weight is checked against the current
+limit when published, so a load made too large by shrinking returns `TooHeavy`
+without entering the cache. Inserts and batches also check weight under the
+same lock; TTL, copy policy and load admission limits remain unchanged.

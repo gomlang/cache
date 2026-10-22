@@ -1,0 +1,148 @@
+package tests;
+
+use ecosystem::cache;
+use std::testing;
+use std::context;
+use std::task;
+
+#[test]
+fn resizing_evicts_lru_atomically_and_notifies_outside_lock() -> () {
+    let events = Vec::new();
+    let saved: Ref[Option[cache::Cache[isize, string]]] = Ref::new(Option::None);
+    let values = testing::expect_ok(
+        cache::Cache::with_policy(
+            cache::Options::new(4),
+            |v: string| v,
+            |key: isize, _: string, cause| {
+                if cause == cache::RemovalCause::Capacity {
+                    events.push(key);
+                    let current = testing::expect_some(saved.get(), "saved");
+                    testing::assert(current.stats().entries <= current.capacity().0);
+                }
+            },
+        ),
+        "cache",
+    );
+    saved.set(Option::Some(values));
+    for key in 0..4 {
+        testing::assert_ok(values.insert(key, "v", 2));
+    }
+    testing::assert_ok(values.get(0));
+    testing::assert_ok(values.resize(2, 4));
+    testing::assert(events == Vec::from_array([1, 2]));
+    testing::assert(testing::expect_ok(values.keys_lru(), "keys") == Vec::from_array([3, 0]));
+    testing::assert_eq(values.stats().weight, 4);
+    testing::assert_eq(values.stats().evictions, 2);
+    testing::assert_err(values.resize(0, 1));
+    testing::assert(values.capacity() == (2, 4));
+    testing::assert_eq(values.stats().entries, 2);
+    testing::assert_ok(values.resize(8, 100));
+    testing::assert_ok(values.insert(8, "larger", 50));
+    testing::assert_ok(values.resize(8, 1));
+    testing::assert_eq(values.stats().entries, 0);
+    testing::assert_err(values.insert(0, "too heavy", 2));
+    values.close();
+    testing::assert_err(values.resize(4, 4));
+    testing::assert(values.capacity() == (8, 1));
+}
+
+#[test]
+fn shrinking_during_load_rechecks_weight_at_publication() -> () {
+    let values: cache::Cache[isize, string] = testing::expect_ok(
+        cache::Cache::new(cache::Options::new(8)),
+        "cache",
+    );
+    let entered = Channel::new(0);
+    let release = Channel::new(0);
+    let result = Channel::new(1);
+    task::scope(
+        |scope| {
+            let worker = scope.spawn(
+                |_| {
+                    result.send(
+                        values.get_or_try_insert_with(
+                            context::Context::background(),
+                            1,
+                            |_| {
+                                entered.send(());
+                                let _ = release.recv();
+                                Result::Ok(cache::Loaded::new("loaded", 10))
+                            },
+                        ),
+                    );
+                },
+            );
+            let _ = entered.recv();
+            testing::assert_ok(values.resize(2, 2));
+            release.send(());
+            let loaded = testing::expect_some(result.recv(), "result");
+            testing::assert_eq(testing::expect_err(loaded, "new budget"), cache::Error::TooHeavy);
+            worker.join();
+        },
+    );
+    testing::assert_eq(values.stats().inflight, 0);
+    testing::assert_eq(values.stats().entries, 0);
+    testing::assert_eq(values.stats().load_failures, 1);
+}
+
+#[test]
+fn concurrent_resizing_inserts_and_close_keep_accounting_consistent() -> () {
+    let values: cache::Cache[isize, string] = testing::expect_ok(
+        cache::Cache::new(cache::Options::new(32)),
+        "cache",
+    );
+    task::scope(
+        |scope| {
+            let workers = Vec::new();
+            for worker in 0..4 {
+                workers.push(
+                    scope.spawn(
+                        |_| {
+                            for i in 0..100 {
+                                if worker % 2 == 0 {
+                                    testing::assert_ok(
+                                        values.resize(1 + i % 16, 1 + i.to_i64() % 32),
+                                    );
+                                } else {
+                                    testing::assert_ok(values.insert(worker * 100 + i, "value", 1));
+                                }
+                            }
+                        },
+                    ),
+                );
+            }
+            for worker in workers {
+                worker.join();
+            }
+        },
+    );
+    let stats = values.stats();
+    let capacity = values.capacity();
+    testing::assert(stats.entries <= capacity.0);
+    testing::assert(stats.weight <= capacity.1);
+    testing::assert_eq(stats.weight, stats.entries.to_i64());
+    task::scope(
+        |scope| {
+            let writer = scope.spawn(
+                |_| {
+                    for i in 0..100 {
+                        let _ = values.insert(i, "v", 1);
+                    }
+                },
+            );
+            let resizer = scope.spawn(
+                |_| {
+                    for i in 0..100 {
+                        let _ = values.resize(i + 1, i.to_i64() + 1);
+                    }
+                },
+            );
+            values.close();
+            writer.join();
+            resizer.join();
+        },
+    );
+    testing::assert(values.stats().closed);
+    testing::assert_eq(values.stats().entries, 0);
+    testing::assert_eq(values.stats().weight, 0);
+}
