@@ -71,3 +71,24 @@ fn touching_equal_keys_preserves_the_latest_key_in_lru_and_removals() -> () {
         }
     }
 }
+
+#[test]
+fn expiration_notifications_preserve_the_latest_equal_key() -> () {
+    for expiry in[cache::Expiry::ttl(10), cache::Expiry::idle(10), cache::Expiry::until(10)] {
+        let clock = cache::ManualClock::new();
+        let removed = Vec::new();
+        let values: cache::Cache[AliasKey, string] = testing::expect_ok(
+            cache::Cache::with_policy(
+                cache::Options { clock: clock.clock(), expiry, ..cache::Options::new(2) },
+                |value: string| value,
+                |key: AliasKey, _, _| removed.push(key.label),
+            ),
+            "cache",
+        );
+        testing::assert_ok(values.insert(AliasKey { id: 1, label: "original" }, "value", 1));
+        testing::assert_ok(values.get(AliasKey { id: 1, label: "latest" }));
+        testing::assert_ok(clock.advance(10));
+        testing::assert_eq(testing::expect_ok(values.prune(), "expiry"), 1);
+        testing::assert_eq(removed[0], "latest");
+    }
+}

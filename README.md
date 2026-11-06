@@ -202,6 +202,9 @@ own pending key, or an indirect cycle, waits on itself. GoML exposes no task-loc
 identity with which this library could distinguish that call from a valid waiter.
 A clock or copy callback must likewise avoid recursively invoking itself.
 
+Reads that touch an equal key retain the latest supplied key for LRU listing
+and expiration notifications, including when the expiration deadline is unchanged.
+
 The removal callback receives `(key, isolated_value, RemovalCause)`. Causes are
 `Capacity`, `Expired`, `Replaced`, `Removed`, `Cleared`, and `Closed`. It executes
 synchronously after the mutation releases the lock. Other tasks may have changed

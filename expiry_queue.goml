@@ -66,10 +66,11 @@ impl[K: Eq + Hash] ExpiryQueue[K] {
     fn set(self: ExpiryQueue[K], key: K, deadline: Option[i64]) -> () {
         if let Some(deadline) = deadline {
             if let Some(index) = self.positions.get(key) {
-                if self.values[index].1 == deadline {
+                let unchanged = self.values[index].1 == deadline;
+                self.values[index] = (key, deadline);
+                if unchanged {
                     return
                 }
-                self.values[index] = (key, deadline);
                 let position = self.rise(index);
                 self.sink(position);
             } else {

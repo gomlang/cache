@@ -246,12 +246,10 @@ impl[K: Eq + Hash, V] Cache[K, V] {
                         self.unlink(key, entry);
                         self.append(key, Entry { used: now, ..entry });
                     }
-                    if entry.expiry.tti_ms > 0 {
-                        self.state.get().deadlines.set(
-                            key,
-                            entry.expiry.next_deadline(entry.created, now),
-                        );
-                    }
+                    self.state.get().deadlines.set(
+                        key,
+                        entry.expiry.next_deadline(entry.created, now),
+                    );
                 }
                 Option::Some(entry.value)
             },
